@@ -15,7 +15,10 @@ const moment = require("moment");
 const AWS = require("aws-sdk");
 AWS.config.update({region: "us-west-2"});
 
-const DEFAULT_USERNAME = "default";
+// TODO: After we implement multiple zone groups, they will be differentiated by "zone name" or "group name".
+// Remember that these groups are NOT "users" because it could be just one user keeping track of several groups,
+// for example "When is Alison's next Red Zone?" or "Is April 18th in Lori's Red Zone?".
+const DEFAULT_ZONE_NAME = "default";
 const DEFAULT_DURATION = 4;
 const DEFAULT_INTERVAL = 28;
 
@@ -29,7 +32,7 @@ exports.handler = (event, context, callback) => {
 		const sessionId = event.session.sessionId;
 		const requestId = event.request.requestId;
 		const sessionAttributes = event.session.attributes;
-		console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: exports.handler(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10) + ", requestId=" + requestId.slice(-10) + ", session.new=" + event.session.new + ", session.attributes.sessionId=" + sessionAttributes ? sessionAttributes.sessionId : "not set");
+		console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: exports.handler(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10) + ", requestId=" + requestId.slice(-10) + ", session.new=" + event.session.new + ", session.attributes.sessionId=" + (sessionAttributes ? sessionAttributes.sessionId : "not set"));
 		
 		if (event.session.new || !sessionAttributes || !sessionAttributes.sessionId) {
 			onSessionStarted({ requestId: event.request.requestId }, event.session);
@@ -64,20 +67,19 @@ function loadSessionAttributes(event, callback) {
 			sessionAttributes: {
 				sessionId: sessionId,
 				userId: userId,
-                // These are populated in addUserCallback() or loadUserCallback()
-				// TODO: everything from here down should be in an array of objects named ??? (probably not "users")
+                // These are currently populated in addUserCallback() or loadUserCallback(),
+				// but once we implement multiple zone groups they will be loaded from a separate table
 				// since they are not one-to-one to userId.
-				userName: null,
-				userZones: null,
 				defaultDuration: null,
-				defaultInterval: null
+				defaultInterval: null,
+				// This is populated in loadZonesCallback()
+				userZones: null
 			}
 		};
 
-		// TODO: we don't want to pass userName here since at this point we really want to get all user names associated with the userId
 		// Load user and zones in parallel and then continue with mainHandler2()
-		retrieveUserFromDB(userId, DEFAULT_USERNAME, loadUserCallback);
-		retrieveZonesFromDB(userId, DEFAULT_USERNAME, loadZonesCallback);
+		retrieveUserFromDB(userId, loadUserCallback);
+		retrieveZonesFromDB(userId, loadZonesCallback);
 	}
 	catch (err) {
 		callback(err);
@@ -97,7 +99,6 @@ let loadUserCallback = function(err, data) {
 
     if (data.Item) {
         console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: loadUserCallback(): LOADED defaultDuration=" + data.Item.defaultDuration + " & defaultInterval=" + data.Item.defaultInterval);
-        allData.sessionAttributes.userName = data.Item.userName;
         allData.sessionAttributes.defaultDuration = data.Item.defaultDuration;
         allData.sessionAttributes.defaultInterval = data.Item.defaultInterval;
 
@@ -106,7 +107,7 @@ let loadUserCallback = function(err, data) {
         }
     }
     else {
-        addUser(userId, DEFAULT_USERNAME, DEFAULT_DURATION, DEFAULT_INTERVAL);
+        addUser(userId, DEFAULT_ZONE_NAME, DEFAULT_DURATION, DEFAULT_INTERVAL);
     }
 }
 
@@ -129,10 +130,9 @@ let loadZonesCallback = function (err, data) {
 }
 
 // Adds a new user, calling addUserCallback() when complete.
-function addUser(userId, userName, defaultDuration, defaultInterval) {
-    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: addUser(): userId=" + userId.slice(-10) + ", userName='" + userName + "', defaultDuration=" + defaultDuration + ", defaultInterval=" + defaultInterval);
+function addUser(userId, defaultDuration, defaultInterval) {
+    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: addUser(): userId=" + userId.slice(-10) + ", defaultDuration=" + defaultDuration + ", defaultInterval=" + defaultInterval);
 
-    allData.sessionAttributes.userName = userName;
     allData.sessionAttributes.defaultDuration = defaultDuration;
     allData.sessionAttributes.defaultInterval = defaultInterval;
     allData.sessionAttributes.userZones = [];
@@ -148,7 +148,7 @@ let addUserCallback = function (err, data) {
     }
 
     // TODO: add more detail
-    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: addUserCallback()"); //: userId=" + userId.slice(-10) + ", userName='" + userName + "', defaultDuration=" + defaultDuration + "', defaultInterval=" + defaultInterval);
+    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: addUserCallback()"); //: userId=" + userId.slice(-10) + ", defaultDuration=" + defaultDuration + "', defaultInterval=" + defaultInterval);
 
     if (allData.sessionAttributes.userZones) {
         mainHandler2(allData.event, allData.sessionAttributes, allData.callback);
@@ -215,9 +215,7 @@ function onLaunch(launchRequest, sessionAttributes, callback) {
 	const sessionId = sessionAttributes.sessionId;
 	const requestId = launchRequest.requestId;
 	console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: onLaunch(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10) + ", requestId=" + requestId.slice(-10));
-	
-	// Dispatch to your skill's launch.
-	getWelcomeResponse(callback);
+	getWelcomeResponse(sessionAttributes, callback);
 }
 
 /**
@@ -233,6 +231,7 @@ function onIntent(intentRequest, sessionAttributes, callback) {
 	console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: onIntent(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10) + ", requestId=" + requestId.slice(-10) + ', intentName=' + intentName + "'");
 	
 	// Dispatch to intent handlers
+	// TODO: Add an intent to add (really just a rename from 'default') or change a user name.
 	switch (intentName) {
 		case 'AddZone':
 			addZone(intent, sessionAttributes, intent.slots.BeginDate.value, intent.slots.EndDate.value, callback);
@@ -248,7 +247,7 @@ function onIntent(intentRequest, sessionAttributes, callback) {
 			break;
 		case 'AMAZON.HelpIntent':
 			// TODO: help message
-			getWelcomeResponse(callback);
+			getWelcomeResponse(sessionAttributes, callback);
 			break;
 		case 'AMAZON.CancelIntent':
 		case 'AMAZON.StopIntent':
@@ -323,7 +322,7 @@ function addZone(intent, sessionAttributes, beginDateSlot, endDateSlot, callback
 			isNew: isNew,
 			callback: callback
 		};
-        upsertZoneInDB(sessionAttributes.userId, sessionAttributes.userName, beginDateSlot, endDateSlot, addZoneCallback);
+        upsertZoneInDB(sessionAttributes.userId, beginDateSlot, endDateSlot, addZoneCallback);
 	}
 }
 
@@ -379,7 +378,7 @@ function addZoneByBeginDate(intent, sessionAttributes, beginDateSlot, callback) 
             isNew: isNew,
             callback: callback
         };
-        upsertZoneInDB(sessionAttributes.userId, sessionAttributes.userName, beginDateSlot, endDateStr, addZoneCallback);
+        upsertZoneInDB(sessionAttributes.userId, beginDateSlot, endDateStr, addZoneCallback);
     }
 }
 
@@ -436,7 +435,7 @@ function addZoneByBeginDateAndDuration(intent, sessionAttributes, beginDateSlot,
             isNew: isNew,
             callback: callback
         };
-        upsertZoneInDB(sessionAttributes.userId, sessionAttributes.userName, beginDateSlot, endDateStr, addZoneCallback);
+        upsertZoneInDB(sessionAttributes.userId, beginDateSlot, endDateStr, addZoneCallback);
     }
 }
 
@@ -516,21 +515,39 @@ function getClosestZoneByDate(intent, sessionAttributes, dateSlot, callback) {
 	callback(sessionAttributes, buildSpeechletResponse(intent.name, speechOutput, repromptText, shouldEndSession));
 }
 
-function getWelcomeResponse(callback) {
-    // If we wanted to initialize the session to have some attributes we could add those here.
-    const sessionAttributes = {};
-    const cardTitle = 'Welcome';
+/**
+ * Red Zone was launched without a specific request.
+ */
+function getWelcomeResponse(sessionAttributes, callback) {
+
+	const userId = sessionAttributes.userId;
+	const sessionId = sessionAttributes.sessionId;
+	console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: getWelcomeResponse(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10) + ", " + sessionAttributes.userZones.length + " user zones");
+
+	const cardTitle = 'Welcome';
+	let speechOutput = '';
+	let repromptText = '';
+    let shouldEndSession = true;
+
 	// TODO: Most users will need only one zone, so don't default to asking for a name. Instead we'll use the
 	// name 'default' by default and add and document an intent to add a new user which will rename 'default'
 	// as part of the process.
-	// TODO: Also add another option to add (really just a rename from 'default') or change a user name.
-	// TODO: If there is only one user and they've already entered the required data, tell them when the next
-	// zone begins now.
-    const speechOutput = 'Welcome to Red Zone, when did your last red zone begin?';
-    // If the user either does not reply to the welcome message or says something that is not
-    // understood, they will be prompted again with this text.
-    const repromptText = 'You have no red zone dates yet, would you like to add one?';
-    const shouldEndSession = false;
+
+	// TODO: After we add support for multiple zone groups, if there are multiple groups
+	// on this account then remind the current user now to specify the "zone name" in their requests.
+
+	if (sessionAttributes.userZones) {
+		// TODO: Once we have mutiple zone groups implemented, this is only applicable if there is just one group
+		speechOutput = 'Welcome to Red Zone, your next zone begins on ...'; // TODO
+	}
+	else {
+		speechOutput = 'Welcome to Red Zone, when did your last red zone begin?';
+
+	    // If the user either does not reply to the welcome message or says something that is not
+    	// understood, they will be prompted again with this text.
+		repromptText = 'You have no red zone dates yet, would you like to add one?';
+		shouldEndSession = false;
+	}
 
     callback(sessionAttributes, buildSpeechletResponse(cardTitle, speechOutput, repromptText, shouldEndSession));
 }
@@ -538,7 +555,6 @@ function getWelcomeResponse(callback) {
 function handleSessionEndRequest(callback) {
     const cardTitle = 'Session Ended';
     const speechOutput = 'Thank you for using Red Zone. Have a nice day!';
-    // Setting this to true ends the session and exits the skill.
     const shouldEndSession = true;
 
     callback({}, buildSpeechletResponse(cardTitle, speechOutput, null, shouldEndSession));
@@ -548,29 +564,33 @@ function handleSessionEndRequest(callback) {
 
 // TODO: move these database functions to another file and load using require().
 
-function retrieveUserFromDB(userId, userName, callback) {
-	console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: retrieveUserFromDB(): userId=" + userId.slice(-10) + ", userName='" + userName + "'");
+function retrieveUserFromDB(userId, callback) {
+	console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: retrieveUserFromDB(): userId=" + userId.slice(-10));
 	
+	// TODO: userName will be removed from the redzone-user table
 	const docClient = new AWS.DynamoDB.DocumentClient();
 	const params = {
 		TableName: "redzone-user",
 		Key: {
 			userId: userId,
-			userName: userName
+			userName: DEFAULT_ZONE_NAME
 		}
 	};
     docClient.get(params, callback);
 }
 
-function retrieveZonesFromDB(userId, userName, callback) {
-	console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: retrieveZonesFromDB(): userId=" + userId.slice(-10) + ", userName='" + userName + "'");
+function retrieveZonesFromDB(userId, callback) {
+	console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: retrieveZonesFromDB(): userId=" + userId.slice(-10));
 	
+	// TODO: the redzone-zone table will use userId as its primary key just like redzone-user,
+	// and in this function we want to load all zones from all groups that are associated with the userId,
+	// which we can then filter by group as needed here on the client.
     const docClient = new AWS.DynamoDB.DocumentClient();
     const params = {
         TableName: "redzone-zone",
         KeyConditionExpression: 'userKey = :userKey AND beginDate > :beginningOfTime',
         ExpressionAttributeValues: {
-            ':userKey': userId + "-" + userName,
+            ':userKey': userId + "-" + DEFAULT_ZONE_NAME,
             ':beginningOfTime': '2000-01-01'
         }
     };
@@ -581,14 +601,16 @@ function retrieveZonesFromDB(userId, userName, callback) {
 function upsertUserInDB(sessionAttributes, callback) {
 	const userId = sessionAttributes.userId;
 	const sessionId = sessionAttributes.sessionId;
-    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: upsertUserInDB(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10) + ", userName=" + sessionAttributes.userName + ", defaultDuration=" + sessionAttributes.defaultDuration + ", defaultInterval=" + sessionAttributes.defaultInterval);
+    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: upsertUserInDB(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10) + ", defaultDuration=" + sessionAttributes.defaultDuration + ", defaultInterval=" + sessionAttributes.defaultInterval);
 	
+	// TODO: the userName column will be removed from the redzone-user table and replaced with "zoneName" in a new "zone group" table
+	// that will have its own defaultDuration and defaultInterval columns.
     const docClient = new AWS.DynamoDB.DocumentClient();
     const params = {
         TableName: "redzone-user",
         Item: {
             userId: userId,
-            userName: sessionAttributes.userName,
+            userName: DEFAULT_ZONE_NAME,
             defaultDuration: sessionAttributes.defaultDuration,
             defaultInterval: sessionAttributes.defaultInterval,
             isActive: true
@@ -599,14 +621,14 @@ function upsertUserInDB(sessionAttributes, callback) {
 }
 
 // Inserts a new zone into the database or updates an existing one if one already exists with the same begin date.
-function upsertZoneInDB(userId, userName, beginDate, endDate, callback) {
-	console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: upsertZoneInDB(): userId=" + userId.slice(-10) + ", userName='" + userName + "', beginDate='" + beginDate + "', endDate='" + endDate + "'");
+function upsertZoneInDB(userId, beginDate, endDate, callback) {
+	console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: upsertZoneInDB(): userId=" + userId.slice(-10) + ", beginDate='" + beginDate + "', endDate='" + endDate + "'");
 	
 	const docClient = new AWS.DynamoDB.DocumentClient();
 	const params = {
 		TableName: "redzone-zone",
 		Item: {
-			userKey: userId + "-" + userName,
+			userKey: userId + "-" + DEFAULT_ZONE_NAME,
 			beginDate: beginDate,
             endDate: endDate,
             isActive: true
