@@ -2,13 +2,6 @@
 
 /*
  * RED ZONE
- * 
- * Based on a sample skill built with the Amazon Alexa Skills Kit.
- * The Intent Schema, Custom Slots, and Sample Utterances for this skill, as well as
- * testing instructions are located at http://amzn.to/1LzFrj6
- *
- * For additional samples, visit the Alexa Skills Kit Getting Started guide at
- * http://amzn.to/1LGWsLG
  */
 
 const moment = require("moment");
@@ -48,112 +41,6 @@ exports.handler = (event, context, callback) => {
 		callback(err);
 	}
 };
-
-// Used by loadSessionAttributes(), loadUserCallback(), loadZonesCallback(), and addUser()
-let allData = null;
-
-// Populates an object with session info and everything we know about this user from previous sessions.
-function loadSessionAttributes(event, callback) {
-	try {
-		const userId = event.context.System.user.userId;
-		const sessionId = event.session.sessionId;
-		const requestId = event.request.requestId;
-		console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: loadSessionAttributes(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10) + ", requestId=" + requestId.slice(-10));
-		
-		// Save our params etc. to use in callback functions
-		allData = {
-			event: event,
-			callback: callback,
-			sessionAttributes: {
-				sessionId: sessionId,
-				userId: userId,
-                // These are currently populated in addUserCallback() or loadUserCallback(),
-				// but once we implement multiple zone groups they will be loaded from a separate table
-				// since they are not one-to-one to userId.
-				defaultDuration: null,
-				defaultInterval: null,
-				// This is populated in loadZonesCallback()
-				userZones: null
-			}
-		};
-
-		// Load user and zones in parallel and then continue with mainHandler2()
-		retrieveUserFromDB(userId, loadUserCallback);
-		retrieveZonesFromDB(userId, loadZonesCallback);
-	}
-	catch (err) {
-		callback(err);
-	}
-}
-
-// Called via callback param in retrieveUserFromDB()
-let loadUserCallback = function(err, data) {
-	if (err) {
-		allData.callback(err);
-		return;
-	}
-
-    const userId = allData.sessionAttributes.userId;
-    const sessionId = allData.sessionAttributes.sessionId;
-    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: loadUserCallback(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10));
-
-    if (data.Item) {
-        console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: loadUserCallback(): LOADED defaultDuration=" + data.Item.defaultDuration + " & defaultInterval=" + data.Item.defaultInterval);
-        allData.sessionAttributes.defaultDuration = data.Item.defaultDuration;
-        allData.sessionAttributes.defaultInterval = data.Item.defaultInterval;
-
-        if (allData.sessionAttributes.userZones) {
-            mainHandler2(allData.event, allData.sessionAttributes, allData.callback);
-        }
-    }
-    else {
-        addUser(userId, DEFAULT_ZONE_NAME, DEFAULT_DURATION, DEFAULT_INTERVAL);
-    }
-}
-
-// Called via callback param in retrieveZonesFromDB()
-let loadZonesCallback = function (err, data) {
-	if (err) {
-		allData.callback(err);
-		return;
-	}
-	
-	const userId = allData.sessionAttributes.userId;
-	const sessionId = allData.sessionAttributes.sessionId;
-    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: loadZonesCallback(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10) + ", data.Items=" + JSON.stringify(data.Items));
-	
-	allData.sessionAttributes.userZones = data.Items || [];
-	
-	if (allData.sessionAttributes.defaultDuration) {
-		mainHandler2(allData.event, allData.sessionAttributes, allData.callback);
-	}
-}
-
-// Adds a new user, calling addUserCallback() when complete.
-function addUser(userId, defaultDuration, defaultInterval) {
-    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: addUser(): userId=" + userId.slice(-10) + ", defaultDuration=" + defaultDuration + ", defaultInterval=" + defaultInterval);
-
-    allData.sessionAttributes.defaultDuration = defaultDuration;
-    allData.sessionAttributes.defaultInterval = defaultInterval;
-    allData.sessionAttributes.userZones = [];
-
-    upsertUserInDB(allData.sessionAttributes, addUserCallback);
-}
-
-// Callback for addUser(), called via callback param in upsertUserInDB().
-let addUserCallback = function (err, data) {
-    if (err) {
-        allData.callback(err);
-        return;
-    }
-
-    // TODO: add more detail
-    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: addUserCallback()"); //: userId=" + userId.slice(-10) + ", defaultDuration=" + defaultDuration + "', defaultInterval=" + defaultInterval);
-
-    if (allData.sessionAttributes.userZones) {
-        mainHandler2(allData.event, allData.sessionAttributes, allData.callback);
-    }
-}
 
 // Part 2 of the main event handler, called after user data has been loaded from or inserted into the database.
 // Called from loadUserCallback(), loadZonesCallback(), or addUserCallback().
@@ -272,6 +159,112 @@ function onSessionEnded(sessionEndedRequest, sessionAttributes) {
 }
 
 // --------------- Red Zone Functions ------------------------------------------
+
+// Used by loadSessionAttributes(), loadUserCallback(), loadZonesCallback(), and addUser()
+let allData = null;
+
+// Populates an object with session info and everything we know about this user from previous sessions.
+function loadSessionAttributes(event, callback) {
+	try {
+		const userId = event.context.System.user.userId;
+		const sessionId = event.session.sessionId;
+		const requestId = event.request.requestId;
+		console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: loadSessionAttributes(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10) + ", requestId=" + requestId.slice(-10));
+		
+		// Save our params etc. to use in callback functions
+		allData = {
+			event: event,
+			callback: callback,
+			sessionAttributes: {
+				sessionId: sessionId,
+				userId: userId,
+                // These are currently populated in addUserCallback() or loadUserCallback(),
+				// but once we implement multiple zone groups they will be loaded from a separate table
+				// since they are not one-to-one to userId.
+				defaultDuration: null,
+				defaultInterval: null,
+				// This is populated in loadZonesCallback()
+				userZones: null
+			}
+		};
+
+		// Load user and zones in parallel and then continue with mainHandler2()
+		retrieveUserFromDB(userId, loadUserCallback);
+		retrieveZonesFromDB(userId, loadZonesCallback);
+	}
+	catch (err) {
+		callback(err);
+	}
+}
+
+// Called via callback param in retrieveUserFromDB()
+let loadUserCallback = function(err, data) {
+	if (err) {
+		allData.callback(err);
+		return;
+	}
+
+    const userId = allData.sessionAttributes.userId;
+    const sessionId = allData.sessionAttributes.sessionId;
+    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: loadUserCallback(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10));
+
+    if (data.Item) {
+        console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: loadUserCallback(): LOADED defaultDuration=" + data.Item.defaultDuration + " & defaultInterval=" + data.Item.defaultInterval);
+        allData.sessionAttributes.defaultDuration = data.Item.defaultDuration;
+        allData.sessionAttributes.defaultInterval = data.Item.defaultInterval;
+
+        if (allData.sessionAttributes.userZones) {
+            mainHandler2(allData.event, allData.sessionAttributes, allData.callback);
+        }
+    }
+    else {
+        addUser(userId, DEFAULT_ZONE_NAME, DEFAULT_DURATION, DEFAULT_INTERVAL);
+    }
+}
+
+// Called via callback param in retrieveZonesFromDB()
+let loadZonesCallback = function (err, data) {
+	if (err) {
+		allData.callback(err);
+		return;
+	}
+	
+	const userId = allData.sessionAttributes.userId;
+	const sessionId = allData.sessionAttributes.sessionId;
+    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: loadZonesCallback(): userId=" + userId.slice(-10) + ", sessionId=" + sessionId.slice(-10) + ", data.Items=" + JSON.stringify(data.Items));
+	
+	allData.sessionAttributes.userZones = data.Items || [];
+	
+	if (allData.sessionAttributes.defaultDuration) {
+		mainHandler2(allData.event, allData.sessionAttributes, allData.callback);
+	}
+}
+
+// Adds a new user, calling addUserCallback() when complete.
+function addUser(userId, defaultDuration, defaultInterval) {
+    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: addUser(): userId=" + userId.slice(-10) + ", defaultDuration=" + defaultDuration + ", defaultInterval=" + defaultInterval);
+
+    allData.sessionAttributes.defaultDuration = defaultDuration;
+    allData.sessionAttributes.defaultInterval = defaultInterval;
+    allData.sessionAttributes.userZones = [];
+
+    upsertUserInDB(allData.sessionAttributes, addUserCallback);
+}
+
+// Callback for addUser(), called via callback param in upsertUserInDB().
+let addUserCallback = function (err, data) {
+    if (err) {
+        allData.callback(err);
+        return;
+    }
+
+    // TODO: add more detail
+    console.log(":: DAVELOG " + (new moment()).format("HH:mm:ss") + " UTC :: addUserCallback()"); //: userId=" + userId.slice(-10) + ", defaultDuration=" + defaultDuration + "', defaultInterval=" + defaultInterval);
+
+    if (allData.sessionAttributes.userZones) {
+        mainHandler2(allData.event, allData.sessionAttributes, allData.callback);
+    }
+}
 
 // Used by addZone(), addZoneByBeginDate(), addZoneByBeginDateAndDuration(), addZoneCallback()
 // TODO: name this something else like addZoneAttributes or better yet encapsulate within a class
